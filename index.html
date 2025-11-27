@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scroll Doctor - Mouse Encoder Tester</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050510;
+            color: #0ff;
+            font-family: 'Share Tech Mono', monospace;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        canvas {
+            display: block;
+            box-shadow: 0 0 50px rgba(0, 255, 255, 0.05);
+        }
+
+        #ui-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            padding: 40px;
+            box-sizing: border-box;
+        }
+
+        header {
+            text-align: center;
+            pointer-events: auto;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin: 0;
+            color: #fff;
+            text-shadow: 0 0 10px #0ff;
+            letter-spacing: 2px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 1rem;
+            margin-top: 10px;
+        }
+
+        #stats-panel {
+            display: flex;
+            justify-content: center;
+            gap: 50px;
+            margin-top: 20px;
+        }
+
+        .stat-box {
+            background: rgba(0, 20, 40, 0.8);
+            border: 1px solid #0ff;
+            padding: 15px 30px;
+            text-align: center;
+            min-width: 150px;
+            box-shadow: 0 0 15px rgba(0, 255, 255, 0.1);
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            color: #fff;
+            font-weight: bold;
+        }
+        
+        .stat-value.danger {
+            color: #f03e3e;
+            text-shadow: 0 0 10px #f00;
+            animation: shake 0.3s ease-in-out;
+        }
+
+        .stat-label {
+            font-size: 0.8rem;
+            color: #0ff;
+            text-transform: uppercase;
+            margin-top: 5px;
+        }
+
+        #controls {
+            pointer-events: auto;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid #0ff;
+            color: #0ff;
+            padding: 10px 20px;
+            font-family: 'Share Tech Mono', monospace;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin: 0 10px;
+        }
+
+        .btn:hover {
+            background: rgba(0, 255, 255, 0.2);
+            box-shadow: 0 0 15px #0ff;
+        }
+
+        #log-area {
+            position: absolute;
+            bottom: 100px;
+            right: 40px;
+            width: 300px;
+            height: 200px;
+            overflow-y: hidden;
+            font-size: 0.8rem;
+            color: #888;
+            text-align: right;
+            display: flex;
+            flex-direction: column-reverse;
+            mask-image: linear-gradient(to top, black 80%, transparent 100%);
+        }
+
+        .log-entry {
+            margin: 2px 0;
+        }
+        .log-glitch {
+            color: #f03e3e;
+            font-weight: bold;
+        }
+
+        @keyframes shake {
+            0% { transform: translate(0, 0); }
+            25% { transform: translate(-5px, 0); }
+            50% { transform: translate(5px, 0); }
+            75% { transform: translate(-5px, 0); }
+            100% { transform: translate(0, 0); }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="container">
+        <canvas id="analyzerCanvas"></canvas>
+
+        <div id="ui-layer">
+            <header>
+                <h1>SCROLL DOCTOR</h1>
+                <p class="subtitle">Scroll continuously in one direction. Red bars indicate hardware "jumps".</p>
+                
+                <div id="stats-panel">
+                    <div class="stat-box">
+                        <div id="direction-val" class="stat-value">--</div>
+                        <div class="stat-label">Trend</div>
+                    </div>
+                    <div class="stat-box">
+                        <div id="glitch-val" class="stat-value">0</div>
+                        <div class="stat-label">Glitches Detected</div>
+                    </div>
+                    <div class="stat-box">
+                        <div id="scroll-val" class="stat-value">0</div>
+                        <div class="stat-label">Total Events</div>
+                    </div>
+                </div>
+            </header>
+
+            <div id="log-area">
+                <!-- Logs appear here -->
+            </div>
+
+            <div id="controls">
+                <button class="btn" onclick="analyzer.reset()">RESET TEST</button>
+            </div>
+        </div>
+    </div>
+
+<script>
+    class AudioFeedback {
+        constructor() {
+            this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+            this.masterGain = this.ctx.createGain();
+            this.masterGain.gain.value = 0.1;
+            this.masterGain.connect(this.ctx.destination);
+        }
+
+        playTone(freq, type, duration) {
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            const osc = this.ctx.createOscillator();
+            const gain = this.ctx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, this.ctx.currentTime);
+            gain.gain.setValueAtTime(0.5, this.ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + duration);
+            osc.connect(gain);
+            gain.connect(this.masterGain);
+            osc.start();
+            osc.stop(this.ctx.currentTime + duration);
+        }
+
+        playTick() { this.playTone(800, 'square', 0.05); }
+        playGlitch() { this.playTone(150, 'sawtooth', 0.4); }
+    }
+
+    class ScrollEvent {
+        constructor(delta, timestamp, isGlitch) {
+            this.delta = delta;
+            this.timestamp = timestamp;
+            this.isGlitch = isGlitch;
+            this.x = 0; // Animation position
+        }
+    }
+
+    class Analyzer {
+        constructor() {
+            this.canvas = document.getElementById('analyzerCanvas');
+            this.ctx = this.canvas.getContext('2d');
+            this.audio = new AudioFeedback();
+            
+            this.resize();
+            window.addEventListener('resize', () => this.resize());
+            
+            // State
+            this.events = [];
+            this.totalScrolls = 0;
+            this.glitchCount = 0;
+            this.startTime = Date.now();
+            
+            // Logic
+            this.lastDirection = 0; // 1 = UP, -1 = DOWN
+            this.trendDirection = 0; 
+            this.trendConfidence = 0; // How many consistent scrolls before we lock trend
+            this.lastScrollTime = 0;
+
+            this.setupInput();
+            this.loop = this.loop.bind(this);
+            requestAnimationFrame(this.loop);
+        }
+
+        resize() {
+            this.canvas.width = window.innerWidth;
+            this.canvas.height = window.innerHeight;
+            this.centerY = this.canvas.height / 2;
+        }
+
+        setupInput() {
+            window.addEventListener('contextmenu', e => e.preventDefault());
+            
+            window.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                this.processScroll(e.deltaY);
+            }, { passive: false });
+        }
+
+        processScroll(delta) {
+            const now = Date.now();
+            const currentDir = delta > 0 ? 1 : -1; // 1 = Down (content moves up), -1 = Up
+            let isGlitch = false;
+
+            // Trend Logic
+            // If we haven't scrolled in a while (500ms), reset trend confidence
+            if (now - this.lastScrollTime > 500) {
+                this.trendConfidence = 0;
+                this.trendDirection = 0;
+            }
+
+            // Determine if this is a glitch
+            if (this.trendConfidence >= 2) {
+                // If we have a locked trend and this scroll opposes it
+                if (currentDir !== this.trendDirection) {
+                    isGlitch = true;
+                    this.glitchCount++;
+                    this.audio.playGlitch();
+                    this.log("GLITCH DETECTED: Reverse Jump", true);
+                    
+                    const gVal = document.getElementById('glitch-val');
+                    gVal.innerText = this.glitchCount;
+                    gVal.classList.remove('danger');
+                    void gVal.offsetWidth; // trigger reflow
+                    gVal.classList.add('danger');
+                } else {
+                    this.audio.playTick();
+                }
+            } else {
+                // Building confidence
+                if (currentDir === this.lastDirection) {
+                    this.trendConfidence++;
+                    if(this.trendConfidence === 2) this.trendDirection = currentDir;
+                } else {
+                    this.trendConfidence = 0; // Reset if user is wiggling
+                }
+                this.audio.playTick();
+            }
+
+            this.lastDirection = currentDir;
+            this.lastScrollTime = now;
+            this.totalScrolls++;
+
+            // Add visual event
+            const event = new ScrollEvent(delta, now, isGlitch);
+            // Spawn at right side of screen
+            event.x = this.canvas.width; 
+            this.events.push(event);
+
+            // Update DOM
+            document.getElementById('scroll-val').innerText = this.totalScrolls;
+            document.getElementById('direction-val').innerText = 
+                this.trendConfidence >= 2 ? (this.trendDirection > 0 ? "SCROLLING DOWN" : "SCROLLING UP") : "DETECTING...";
+        }
+
+        log(msg, isError) {
+            const logArea = document.getElementById('log-area');
+            const entry = document.createElement('div');
+            entry.className = isError ? 'log-entry log-glitch' : 'log-entry';
+            const time = new Date().toLocaleTimeString().split(' ')[0];
+            entry.innerText = `[${time}] ${msg}`;
+            logArea.prepend(entry);
+            if (logArea.children.length > 10) logArea.lastChild.remove();
+        }
+
+        reset() {
+            this.events = [];
+            this.totalScrolls = 0;
+            this.glitchCount = 0;
+            this.trendConfidence = 0;
+            this.trendDirection = 0;
+            document.getElementById('scroll-val').innerText = "0";
+            document.getElementById('glitch-val').innerText = "0";
+            document.getElementById('direction-val').innerText = "--";
+            document.getElementById('log-area').innerHTML = "";
+            document.getElementById('glitch-val').classList.remove('danger');
+        }
+
+        draw() {
+            // Background
+            this.ctx.fillStyle = '#050510';
+            this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+            // Draw Central Line
+            this.ctx.strokeStyle = '#1a2a3a';
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.moveTo(0, this.centerY);
+            this.ctx.lineTo(this.canvas.width, this.centerY);
+            this.ctx.stroke();
+
+            // Grid Lines (Time)
+            this.ctx.strokeStyle = '#0a1a2a';
+            this.ctx.lineWidth = 1;
+            const speed = 5;
+            const now = Date.now();
+            const offset = (now / 20) % 50;
+            
+            for(let x = this.canvas.width - offset; x > 0; x -= 50) {
+                this.ctx.beginPath();
+                this.ctx.moveTo(x, 0);
+                this.ctx.lineTo(x, this.canvas.height);
+                this.ctx.stroke();
+            }
+
+            // Draw Events
+            for (let i = this.events.length - 1; i >= 0; i--) {
+                const e = this.events[i];
+                e.x -= speed; // Move left
+
+                // Remove off-screen
+                if (e.x < -20) {
+                    this.events.splice(i, 1);
+                    continue;
+                }
+
+                // Draw Bar
+                // Normlize delta for visual height (clamp at 50)
+                const height = Math.min(Math.abs(e.delta), 100) * 2;
+                const dir = e.delta > 0 ? 1 : -1;
+                
+                if (e.isGlitch) {
+                    this.ctx.fillStyle = '#ff2244';
+                    this.ctx.shadowColor = '#ff0000';
+                } else {
+                    this.ctx.fillStyle = dir > 0 ? '#00ccff' : '#00ffaa'; // Blue for down, Green for up
+                    this.ctx.shadowColor = dir > 0 ? '#00ccff' : '#00ffaa';
+                }
+                
+                this.ctx.shadowBlur = 15;
+                
+                // If scrolling DOWN (positive delta), draw bar DOWN from center
+                // If scrolling UP (negative delta), draw bar UP from center
+                const y = dir > 0 ? this.centerY : this.centerY - height;
+                
+                this.ctx.fillRect(e.x, y, 6, height); // Bar width 6px
+
+                // Connect lines (optional, adds graph feel)
+                if (i < this.events.length - 1) {
+                    const prev = this.events[i+1];
+                    if (Math.abs(e.x - prev.x) < 50) { // Only connect if close
+                        this.ctx.strokeStyle = this.ctx.fillStyle;
+                        this.ctx.lineWidth = 2;
+                        this.ctx.beginPath();
+                        const prevY = prev.delta > 0 ? this.centerY + Math.min(Math.abs(prev.delta), 100)*2 : this.centerY - Math.min(Math.abs(prev.delta), 100)*2;
+                        const currY = dir > 0 ? y + height : y;
+                        this.ctx.moveTo(prev.x + 3, prevY); // center of bar
+                        this.ctx.lineTo(e.x + 3, currY);
+                        this.ctx.stroke();
+                    }
+                }
+            }
+            this.ctx.shadowBlur = 0;
+            
+            // Draw Center Indicator
+            this.ctx.fillStyle = '#fff';
+            this.ctx.fillRect(this.canvas.width - 10, this.centerY - 5, 10, 10);
+        }
+
+        loop() {
+            this.draw();
+            requestAnimationFrame(this.loop);
+        }
+    }
+
+    const analyzer = new Analyzer();
+
+</script>
+</body>
+</html>
